@@ -40,18 +40,37 @@ jobs:
       - name: Set Up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android SDK Licenses
+        shell: bash
+        run: |
+          echo "Accepting Android SDK licenses non-interactively..."
+          yes | sdkmanager --licenses || true
+
+      - name: Restore Debug Keystore
+        shell: bash
+        run: |
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            echo "Decoding debug.keystore from debug.keystore.base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+
       - name: Verify Project Files
         shell: bash
         run: |
           set -e
-          echo "Checking Android project..."
+          echo "Checking Android project structure..."
 
           if [ ! -f "./gradlew" ]; then
-            echo "::error::Gradle wrapper not found at repository root."
+            echo "::error::Gradle wrapper (gradlew) not found at repository root."
             exit 1
           fi
 
-          if [ ! -f "./settings.gradle" ] && [ ! -f "./settings.gradle.kts" ]; then
+          if [ ! -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "::error::Gradle wrapper jar not found at gradle/wrapper/gradle-wrapper.jar."
+            exit 1
+          fi
+
+          if [ ! -f "./settings.gradle.kts" ] && [ ! -f "./settings.gradle" ]; then
             echo "::error::Gradle settings file not found."
             exit 1
           fi
@@ -59,22 +78,26 @@ jobs:
           chmod +x ./gradlew
           echo "Project structure check completed."
 
-      - name: Check Package Configuration
+      - name: Validate Application ID
         shell: bash
         run: |
-          echo "Expected Android application ID: com.lax.recorder"
-          echo "The application module must configure:"
-          echo "applicationId = \"com.lax.recorder\""
-          echo "Verify the actual Gradle configuration before release."
+          set -e
+          echo "Validating applicationId in app/build.gradle.kts..."
+          if grep -q 'applicationId = "com.lax.recorder"' app/build.gradle.kts; then
+            echo "Verified: applicationId is com.lax.recorder"
+          else
+            echo "::error::Application ID com.lax.recorder was not found in app/build.gradle.kts."
+            exit 1
+          fi
 
       - name: Validate Gradle Configuration
         run: ./gradlew --no-daemon help
 
       - name: Run Unit Tests
-        run: ./gradlew --no-daemon test
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
 
       - name: Build Debug APK
-        run: ./gradlew --no-daemon assembleDebug
+        run: ./gradlew --no-daemon :app:assembleDebug
 
       - name: Locate Generated APK
         id: apk
@@ -82,20 +105,18 @@ jobs:
         run: |
           set -e
 
-          APK_PATH="$(find . -type f \
-            -path '*/build/outputs/apk/debug/*.apk' \
-            -print -quit)"
+          APK_PATH="$(find app/build/outputs/apk/debug -name '*.apk' -type f | head -n 1)"
 
-          if [ -z "$APK_PATH" ]; then
-            echo "::error::Debug APK was not generated."
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "::error::Debug APK was not generated in app/build/outputs/apk/debug."
             exit 1
           fi
 
+          echo "Found APK at: $APK_PATH"
           mkdir -p release
           cp "$APK_PATH" release/LAX-GAME-RECORDER-debug.apk
 
           echo "path=release/LAX-GAME-RECORDER-debug.apk" >> "$GITHUB_OUTPUT"
-
           echo "APK generated successfully."
 
       - name: Upload APK Artifact
@@ -111,9 +132,9 @@ jobs:
         run: |
           echo "## LAX GAME RECORDER - Build Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Package ID: com.lax.recorder" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Build type: Debug APK" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Artifact: LAX-GAME-RECORDER-Android-APK" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Workflow: GitHub Actions" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Application ID:** com.lax.recorder" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Build Variant:** Debug APK (:app:assembleDebug)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Artifact Name:** LAX-GAME-RECORDER-Android-APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Workflow:** GitHub Actions (.github/workflows/build.yml)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Download the APK from the workflow run's Artifacts section." >> "$GITHUB_STEP_SUMMARY"
+          echo "You can download the APK from the Artifacts section of this workflow run." >> "$GITHUB_STEP_SUMMARY"
