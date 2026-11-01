@@ -1,0 +1,6 @@
+{
+  "name": "LAX GPC RECORDER",
+  "description": "Firebase Authentication module for LAX GPC RECORDER with Email and Password sign-in, account creation, and password recovery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
