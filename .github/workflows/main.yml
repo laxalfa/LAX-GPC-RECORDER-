@@ -1,0 +1,181 @@
+name: LAX GAME RECORDER - Android Build
+
+on:
+push:
+branches:
+- main
+- master
+
+pull_request:
+branches:
+- main
+- master
+
+workflow_dispatch:
+
+permissions:
+contents: read
+
+concurrency:
+group: android-build-${{ github.ref }}
+cancel-in-progress: true
+
+jobs:
+build:
+name: Build Android APK
+runs-on: ubuntu-latest
+timeout-minutes: 45
+
+steps:
+  # 1. Download the existing repository
+  - name: Checkout Repository
+    uses: actions/checkout@v4
+
+  # 2. Configure Java 17
+  - name: Set Up Java 17
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '17'
+
+  # 3. Configure Gradle and dependency caching
+  - name: Set Up Gradle
+    uses: gradle/actions/setup-gradle@v4
+
+  # 4. Configure Android SDK
+  - name: Set Up Android SDK
+    uses: android-actions/setup-android@v3
+    with:
+      accept-android-sdk-licenses: true
+      packages: 'platform-tools'
+
+  # 5. Verify project structure
+  - name: Verify Project Structure
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      if [ ! -f "gradlew" ]; then
+        echo "::error::gradlew is missing from the repository root."
+        exit 1
+      fi
+
+      if [ ! -f "gradle/wrapper/gradle-wrapper.properties" ]; then
+        echo "::error::Gradle Wrapper properties are missing."
+        exit 1
+      fi
+
+      if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+        echo "::error::Gradle Wrapper JAR is missing."
+        exit 1
+      fi
+
+      if [ ! -f "settings.gradle" ] && \
+         [ ! -f "settings.gradle.kts" ]; then
+        echo "::error::Gradle settings file is missing."
+        exit 1
+      fi
+
+      if [ ! -f "app/build.gradle" ] && \
+         [ ! -f "app/build.gradle.kts" ]; then
+        echo "::error::App module Gradle configuration is missing."
+        exit 1
+      fi
+
+      chmod +x gradlew
+
+      echo "Project structure verified."
+
+  # 6. Check the expected application ID configuration
+  - name: Check Package Configuration
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      if [ -f "app/build.gradle" ]; then
+        GRADLE_FILE="app/build.gradle"
+      elif [ -f "app/build.gradle.kts" ]; then
+        GRADLE_FILE="app/build.gradle.kts"
+      else
+        echo "::error::App Gradle configuration not found."
+        exit 1
+      fi
+
+      if ! grep -Fq 'com.lax.recorder' "$GRADLE_FILE"; then
+        echo "::error::Expected package ID com.lax.recorder was not found."
+        echo "Check the applicationId in $GRADLE_FILE."
+        exit 1
+      fi
+
+      echo "Expected package ID text found in $GRADLE_FILE."
+
+  # 7. Validate Gradle configuration
+  - name: Validate Gradle Configuration
+    run: ./gradlew --no-daemon help
+
+  # 8. Run unit tests
+  - name: Run Unit Tests
+    run: ./gradlew --no-daemon test
+
+  # 9. Build debug APK
+  - name: Build Debug APK
+    run: ./gradlew --no-daemon assembleDebug
+
+  # 10. Locate and prepare the APK
+  - name: Locate Generated APK
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      APK_PATH="$(find app/build/outputs/apk/debug \
+        -maxdepth 1 \
+        -type f \
+        -name '*.apk' \
+        -print \
+        -quit)"
+
+      if [ -z "$APK_PATH" ]; then
+        echo "::error::Debug APK was not generated in the expected directory."
+
+        echo "Available APK files:"
+        find app/build/outputs/apk \
+          -type f \
+          -name '*.apk' \
+          -print || true
+
+        exit 1
+      fi
+
+      mkdir -p release
+
+      cp "$APK_PATH" \
+        release/LAX-GAME-RECORDER-debug.apk
+
+      echo "APK prepared successfully."
+      ls -lh release/LAX-GAME-RECORDER-debug.apk
+
+  # 11. Upload the APK as a downloadable artifact
+  - name: Upload APK Artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: LAX-GAME-RECORDER-Android-APK
+      path: release/LAX-GAME-RECORDER-debug.apk
+      if-no-files-found: error
+      retention-days: 14
+
+  # 12. Display build summary
+  - name: Build Summary
+    if: success()
+    shell: bash
+    run: |
+      {
+        echo "## LAX GAME RECORDER"
+        echo ""
+        echo "- Build status: Successful"
+        echo "- Application ID: com.lax.recorder"
+        echo "- Build type: Debug APK"
+        echo "- Artifact: LAX-GAME-RECORDER-Android-APK"
+        echo "- Artifact retention: 14 days"
+        echo ""
+        echo "Download the APK from the Artifacts section of this workflow run."
+      } >> "$GITHUB_STEP_SUMMARY"
